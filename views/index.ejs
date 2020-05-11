@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>!..WebRTC..!</title>
+    <link rel="stylesheet" type="text/css" href="styles.css" />
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/public/getscreenmedia.bundle.js"></script>
+  </head>
+  
+  <body>
+    <div class="call-page">
+      <video id="myVideoTag" autoplay muted="muted"></video>
+      <video id="theirVideoTag" autoplay></video>
+    </div>
+    <div style="padding-bottom: 14px;">
+      <button id="muteAudio">Mute</button>
+      <button id="pauseVideo">Pause Video</button>
+      <button id="shareScreen">Share Screen</button>
+    </div>
+    <div>
+        <label>Your Name</label><input id="myName" type="text"/>
+        <label>Message</label><input id="myMessage" type="text"/>
+        <input id="sendMessage" type="submit"/>
+        <div id="chatArea">Message Output:</br></div>
+        <div id="signalingArea">Signaling Messages:</br></div>
+    </div>
+
+    <script>
+      const myVideoArea = document.querySelector("#myVideoTag");
+      const theirVideoArea = document.querySelector("#theirVideoTag");
+      const muteAudio = document.querySelector("#muteAudio");
+      const pauseVideo = document.querySelector("#pauseVideo");
+      const shareScreen = document.querySelector("#shareScreen");
+      const myName = document.querySelector("#myName");
+      const myMessage = document.querySelector("#myMessage");
+      const sendMessage = document.querySelector("#sendMessage");
+      const chatArea = document.querySelector("#chatArea");
+      const signalingArea = document.querySelector("#signalingArea");
+      const ROOM = "chat";
+      const SIGNAL_ROOM = "signal_room";
+			const configuration = {
+				'iceServers': [{
+					'url': 'stun:stun.l.google.com:19302'
+				}]
+			};
+      let rtcPeerConn;
+      
+      io = io.connect();
+	    io.emit('ready', {"chat_room": ROOM, "signal_room": SIGNAL_ROOM});      
+      io.emit('signal',{"type":"user_here", "message":"Are you ready for a call?", "room":SIGNAL_ROOM});
+
+      io.on('signaling_message', data => {
+        displaySignalMessage("Signal received: " + data.type);
+        if (!rtcPeerConn)
+          startSignaling();          
+        if (data.type !== "user_here") {
+					const message = JSON.parse(data.message);
+					if (message.sdp) {
+						rtcPeerConn.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
+							if (rtcPeerConn.remoteDescription.type === 'offer') {
+								rtcPeerConn.createAnswer(sendLocalDesc, logError);
+							}
+						}, logError);
+					}
+					else {
+						rtcPeerConn.addIceCandidate(new RTCIceCandidate(message.candidate));
+					}
+				}  
+      });
+
+      function startSignaling() {
+        displaySignalMessage("starting signaling...");       
+        rtcPeerConn = new webkitRTCPeerConnection(configuration);
+				rtcPeerConn.onicecandidate = evt => {
+					if (evt.candidate)
+						io.emit('signal',{"type":"ice candidate", "message": JSON.stringify({ 'candidate': evt.candidate }), "room":SIGNAL_ROOM});
+					// displaySignalMessage("completed that ice candidate...");
+				};
+				rtcPeerConn.onnegotiationneeded = () => {
+					displaySignalMessage("on negotiation called");
+					rtcPeerConn.createOffer(sendLocalDesc, logError);
+        }
+				rtcPeerConn.onaddstream = evt => {
+					// displaySignalMessage("going to add their stream...");
+					theirVideoArea.srcObject = evt.stream;
+        };
+				navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+				navigator.getUserMedia({
+					'audio': true,
+					'video': true
+				}, stream => {
+					// displaySignalMessage("going to display my stream...");
+					myVideoArea.srcObject = stream;
+					rtcPeerConn.addStream(stream);
+				}, logError);
+      }
+      
+      function sendLocalDesc(desc) {
+				rtcPeerConn.setLocalDescription(desc, () => {
+					// displaySignalMessage("sending local description");
+					io.emit('signal',{"type":"SDP", "message": JSON.stringify({ 'sdp': rtcPeerConn.localDescription }), "room":SIGNAL_ROOM});
+				}, logError);
+			}
+			
+			function logError(error) {
+				displaySignalMessage(error.name + ': ' + error.message);
+			}
+
+	    io.on('announce', data => {
+	    	displayMessage(data.message);
+      });
+
+      io.on('message', data => {
+				displayMessage(data.author + ": " + data.message);
+			});
+
+      sendMessage.addEventListener('click', ev => {
+        io.emit('send', {"author":myName.value, "message":myMessage.value, "room":ROOM});
+				ev.preventDefault();
+			}, false);
+      
+      function displayMessage(message) {
+		     chatArea.innerHTML = chatArea.innerHTML + "<br/>" + message;
+       }
+       
+      function displaySignalMessage(message) {
+				signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + message;
+      }
+
+      muteAudio.addEventListener('click', ev => {
+      	console.log("muting/unmuting myself");
+	      const streams = rtcPeerConn.getLocalStreams();
+	      for (let stream of streams) {
+		      for (let audioTrack of stream.getAudioTracks()) {
+			      if (audioTrack.enabled) { muteAudio.innerHTML = "Unmute" }
+			      else { muteAudio.innerHTML = "Mute" }
+			      audioTrack.enabled = !audioTrack.enabled;
+		      }
+		      console.log("Local stream: " + stream.id);
+	      }
+	      ev.preventDefault();
+        }, false);
+      
+      pauseVideo.addEventListener('click', ev => {
+	      console.log("pausing/unpausing my video");
+	      const streams = rtcPeerConn.getLocalStreams();
+	      for (let stream of streams) {
+	      	for (let videoTrack of stream.getVideoTracks()) {
+	      		if (videoTrack.enabled) { pauseVideo.innerHTML = "Start Video" }
+	      		else { pauseVideo.innerHTML = "Pause Video" }
+	      		videoTrack.enabled = !videoTrack.enabled;
+	      	}
+	      	console.log("Local stream: " + stream.id);
+      	}
+      	ev.preventDefault();
+        }, false);      
+
+        shareScreen.addEventListener('click', ev => {
+          shareScreenText = "Share Screen";
+          stopShareScreenText = "Stop Screen";
+          if(shareScreen.innerHTML === shareScreenText) {
+            getScreenMedia((err, stream) => {
+		          if (err) {
+			          console.log('failed: ' + err);
+		          } else {
+			          console.log('got a stream', stream);  
+			          myVideoTag.srcObject = stream;
+			          rtcPeerConn.addStream(stream);
+		          }
+            });
+            shareScreen.innerHTML = stopShareScreenText;
+          } else {
+            console.log("Resetting my stream to video...");
+            navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+            navigator.getUserMedia({
+				    	'audio': true,
+					    'video': true
+				    }, stream => {
+					  // displaySignalMessage("going to display my stream...");
+					  myVideoArea.srcObject = stream;
+					  rtcPeerConn.addStream(stream);
+            }, logError);
+            shareScreen.innerHTML = shareScreenText;
+          }
+	        ev.preventDefault();
+        }, false);
+    </script>
+  </body>
+</html>

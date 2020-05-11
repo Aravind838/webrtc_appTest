@@ -1,0 +1,19 @@
+.call-page {
+  position: relative;
+  width: 500px;
+  height: 300px;
+  padding-bottom: 10px;
+}
+
+#myVideoTag {
+  width: 150px;
+  height: 90px;
+  position: absolute;
+  top: 210px;
+  right: 35px;
+}
+
+#theirVideoTag {
+  width: 500px;
+  height: 300px;
+}
